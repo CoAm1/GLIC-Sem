@@ -1,0 +1,54 @@
+width: 640
+height: 480
+fx: 383.9298163754784
+fy: 382.9589851049001
+cx: 322.81111219908314
+cy: 250.9729552053214
+
+select_every_k_frame: 5
+depth_completion: false
+patch_size: 10
+max_depth: 80
+trajectory_render_frames: 0
+
+sh_degree: 3
+white_background: false
+random_background: false
+convert_SHs_python: false
+compute_cov3D_python: false
+lambda_erank: 0
+scaling_scale: 1
+
+position_lr: 0.00016
+feature_lr: 0.0050
+opacity_lr: 0.05
+scaling_lr: 0.005
+rotation_lr: 0.001
+lambda_dssim: 0.2
+optimize_depth: true
+lambda_depth: 0.005
+random_seed: 3407
+iteration_decay: false
+
+# Train the same closed-set semantic features and CE as the joint model, but
+# discard only the semantic gradients on shared Gaussian geometry/appearance.
+semantic_training: true
+semantic_streaming_ce: true
+semantic_geometry_gradients: false
+pca_language_training: false
+semantic_lr: 0.01
+lambda_semantic: 0.05
+lambda_pca_language: 0.0
+lambda_pca_coefficient: 0.0
+pca_max_coefficient_norm: 0.0
+lambda_semantic_region: 0.0
+semantic_region_stride: 1
+semantic_class_count: 12
+semantic_min_support: 0.5
+semantic_min_confidence: 0.35
+semantic_normal_weighting: false
+
+apply_exposure: false
+exposure_lr: 0.001
+skybox_points_num: 0
+skybox_radius: 1000
