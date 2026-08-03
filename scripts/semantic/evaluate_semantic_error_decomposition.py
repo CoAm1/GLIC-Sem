@@ -333,6 +333,32 @@ def sam_oracle(
     weighted_correct = int(np.count_nonzero(
         (prediction == reference) & reference_valid & sam_valid
     ))
+    per_class = {}
+    for class_id in class_ids:
+        class_id_int = int(class_id)
+        class_reference = reference_valid & (reference == class_id_int)
+        reference_pixels = int(np.count_nonzero(class_reference))
+        covered_reference_pixels = int(np.count_nonzero(class_reference & sam_valid))
+        oracle_correct_pixels = int(np.count_nonzero(
+            class_reference & sam_valid & (prediction == class_id_int)
+        ))
+        per_class[str(class_id_int)] = {
+            "reference_pixels": reference_pixels,
+            "sam_covered_reference_pixels": covered_reference_pixels,
+            "sam_reference_coverage": (
+                covered_reference_pixels / reference_pixels
+                if reference_pixels else None
+            ),
+            "oracle_correct_reference_pixels": oracle_correct_pixels,
+            "oracle_recall_on_all_reference": (
+                oracle_correct_pixels / reference_pixels
+                if reference_pixels else None
+            ),
+            "oracle_accuracy_on_sam_covered_reference": (
+                oracle_correct_pixels / covered_reference_pixels
+                if covered_reference_pixels else None
+            ),
+        }
     diagnostic = {
         "sam_pixel_coverage_on_reference": (
             float(np.mean(sam_valid[reference_valid]))
@@ -344,8 +370,77 @@ def sam_oracle(
             weighted_correct / labelled_pixels if labelled_pixels else None
         ),
         "assigned_region_count_by_class": assigned_class_counts,
+        "per_class": per_class,
     }
     return prediction, sam_valid, diagnostic
+
+
+def aggregate_sam_oracle_diagnostics(
+    diagnostics: Sequence[dict], classes: Sequence[PromptClass]
+) -> dict:
+    grouped: dict[str, list[dict]] = {"all": list(diagnostics)}
+    for diagnostic in diagnostics:
+        split = str(diagnostic.get("split", "unspecified"))
+        grouped.setdefault(split, []).append(diagnostic)
+
+    report = {}
+    for split, items in grouped.items():
+        per_class = {}
+        for item in classes:
+            class_key = str(item.class_id)
+            reference_pixels = sum(
+                int(frame["per_class"][class_key]["reference_pixels"])
+                for frame in items
+            )
+            covered_pixels = sum(
+                int(frame["per_class"][class_key]["sam_covered_reference_pixels"])
+                for frame in items
+            )
+            correct_pixels = sum(
+                int(frame["per_class"][class_key]["oracle_correct_reference_pixels"])
+                for frame in items
+            )
+            assigned_regions = sum(
+                int(frame["assigned_region_count_by_class"][class_key])
+                for frame in items
+            )
+            uncovered_pixels = reference_pixels - covered_pixels
+            covered_but_not_correct = covered_pixels - correct_pixels
+            per_class[class_key] = {
+                "name": item.name,
+                "reference_pixels": reference_pixels,
+                "sam_covered_reference_pixels": covered_pixels,
+                "oracle_correct_reference_pixels": correct_pixels,
+                "uncovered_reference_pixels": uncovered_pixels,
+                "covered_but_not_oracle_correct_pixels": covered_but_not_correct,
+                "sam_reference_coverage": (
+                    covered_pixels / reference_pixels if reference_pixels else None
+                ),
+                "oracle_accuracy_on_sam_covered_reference": (
+                    correct_pixels / covered_pixels if covered_pixels else None
+                ),
+                "oracle_recall_on_all_reference": (
+                    correct_pixels / reference_pixels if reference_pixels else None
+                ),
+                "uncovered_fraction_of_reference": (
+                    uncovered_pixels / reference_pixels if reference_pixels else None
+                ),
+                "covered_but_not_oracle_correct_fraction_of_reference": (
+                    covered_but_not_correct / reference_pixels
+                    if reference_pixels else None
+                ),
+                "assigned_regions": assigned_regions,
+            }
+        report[split] = {
+            "frames": len(items),
+            "per_class": per_class,
+            "interpretation_guardrail": (
+                "Covered-but-not-oracle-correct is a partition/merge candidate, "
+                "not proof of a SAM error; sparse-label projection or timing errors "
+                "can produce the same symptom."
+            ),
+        }
+    return report
 
 
 def load_stage3_scores(
@@ -429,7 +524,11 @@ def scalar_metrics_from_confusion(
         support = int(confusion[index].sum())
         predicted = int(confusion[:, index + 1].sum())
         union = support + predicted - true_positive
-        if union:
+        # A class with no reference positives in this evaluation split has no
+        # defined IoU.  False-positive predictions still affect pixel
+        # accuracy and the confusion matrix, but must not manufacture a zero
+        # entry in the macro-IoU average.
+        if support:
             ious.append(true_positive / union)
         if support:
             recalls.append(true_positive / support)
@@ -470,7 +569,7 @@ def metric_report(
         false_positive = predicted_count - true_positive
         false_negative = support - true_positive
         union = true_positive + false_positive + false_negative
-        iou = true_positive / union if union else None
+        iou = true_positive / union if support else None
         precision = true_positive / predicted_count if predicted_count else None
         recall = true_positive / support if support else None
         ap = (
@@ -532,11 +631,28 @@ def temporal_block_bootstrap(
     replicates: int,
     block_size: int,
     seed: int,
+    frame_groups: dict[int, int] | None = None,
 ) -> dict:
     frames = sorted(frame_confusions)
     if not frames or replicates <= 0:
         return {"enabled": False, "reason": "no frames or zero replicates"}
-    blocks = [frames[index : index + block_size] for index in range(0, len(frames), block_size)]
+    if frame_groups is None:
+        blocks = [
+            frames[index : index + block_size]
+            for index in range(0, len(frames), block_size)
+        ]
+        resampling_unit = "contiguous_frame_block"
+        group_ids = None
+    else:
+        missing_groups = [frame for frame in frames if frame not in frame_groups]
+        if missing_groups:
+            raise ValueError(f"missing bootstrap groups: {missing_groups[:8]}")
+        grouped_frames: dict[int, list[int]] = {}
+        for frame in frames:
+            grouped_frames.setdefault(int(frame_groups[frame]), []).append(frame)
+        group_ids = sorted(grouped_frames)
+        blocks = [grouped_frames[group_id] for group_id in group_ids]
+        resampling_unit = "label_scan_index"
     generator = np.random.default_rng(seed)
     samples = {
         stage: {metric: [] for metric in (
@@ -584,8 +700,11 @@ def temporal_block_bootstrap(
     return {
         "enabled": True,
         "replicates": replicates,
-        "block_size_frames": block_size,
+        "resampling_unit": resampling_unit,
+        "block_size_frames": block_size if frame_groups is None else None,
         "block_count": len(blocks),
+        "group_ids": group_ids,
+        "frames_per_group": [len(block) for block in blocks],
         "seed": seed,
         "stages": {
             stage: {
@@ -597,7 +716,12 @@ def temporal_block_bootstrap(
         "paired_stage_drops": {
             name: quantile_interval(values) for name, values in drops.items()
         },
-        "guardrail": "Temporal blocks, not pixels, are the resampling unit.",
+        "guardrail": (
+            "LiDAR label-scan groups, not pixels or projected camera frames, "
+            "are the resampling unit."
+            if frame_groups is not None else
+            "Contiguous temporal frame blocks, not pixels, are the resampling unit."
+        ),
     }
 
 
@@ -938,6 +1062,7 @@ def main() -> None:
         args.bootstrap_replicates,
         args.bootstrap_block_size,
         args.bootstrap_seed,
+        frame_groups={frame: alignment[frame] for frame in heldout_confusions},
     )
     output = {
         "schema": "open_vocab_semantic_error_decomposition_v1",
@@ -965,6 +1090,9 @@ def main() -> None:
         "heldout_full_reference_stage_drops": stage_drops,
         "heldout_temporal_block_bootstrap": bootstrap,
         "sam_oracle_per_frame": oracle_diagnostics,
+        "sam_oracle_by_split": aggregate_sam_oracle_diagnostics(
+            oracle_diagnostics, classes
+        ),
         "guardrails": [
             "SAM Oracle uses evaluation labels and is not a deployable method result.",
             "MCD labels were read only inside this evaluator.",
