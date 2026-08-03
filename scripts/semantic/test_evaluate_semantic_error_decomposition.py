@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 import numpy as np
@@ -11,6 +12,16 @@ import evaluate_semantic_error_decomposition as evaluator
 
 
 class SemanticErrorDecompositionTests(unittest.TestCase):
+    def test_prompt_groups_v2_is_accepted(self) -> None:
+        path = (
+            Path(__file__).parents[2]
+            / "config"
+            / "mcd_open_vocab_prompt_groups_v2.json"
+        )
+        classes, loaded = evaluator.load_prompt_groups(path)
+        self.assertEqual(loaded["schema"], "mcd_open_vocab_prompt_groups_v2")
+        self.assertIn("traffic cone", classes[8].queries)
+
     def test_disjoint_scan_split(self) -> None:
         frames = [4, 5, 6, 7, 8, 9]
         alignment = {4: 100, 5: 100, 6: 101, 7: -1, 8: 102, 9: 103}

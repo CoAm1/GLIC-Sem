@@ -102,7 +102,10 @@ class PromptClass:
 
 def load_prompt_groups(path: Path) -> tuple[list[PromptClass], dict]:
     document = json.loads(path.read_text(encoding="utf-8"))
-    if document.get("schema") != "mcd_open_vocab_prompt_groups_v1":
+    if document.get("schema") not in {
+        "mcd_open_vocab_prompt_groups_v1",
+        "mcd_open_vocab_prompt_groups_v2",
+    }:
         raise ValueError("unexpected prompt-group schema")
     if document.get("frozen_before_heldout_evaluation") is not True:
         raise ValueError("prompt groups must be marked frozen before held-out evaluation")
