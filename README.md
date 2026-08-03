@@ -43,6 +43,7 @@ These are pilot results, not a final open-vocabulary claim. Sparse disjoint-scan
 - `scripts/semantic/`: teacher preparation, PCA tools, rendering, scoring, and error decomposition.
 - `scripts/run_mcd_semantic_error_decomposition_60.sh`: reproducible 60-frame experiment driver.
 - `docs/OPEN_VOCAB_SEMANTIC_ERROR_DECOMPOSITION_PROTOCOL.md`: first-principles validation protocol.
+- `docs/experiments/MCD_S0_S2_60FRAME_20260803.md`: audited 60-frame S0-S2 results and the next single-variable experiment.
 - `docs/SOURCE_ONLY_RELEASE_MANIFEST.md`: source release boundary and exclusions.
 - `tools/audit_git_payload.py`: pre-commit guard against weights, datasets, results, binaries, and credentials.
 
@@ -59,4 +60,3 @@ The guard rejects common model, dataset, point-cloud, archive, result, build, an
 ## Status
 
 This repository is an experimental source snapshot rather than a turnkey release. The next milestone is to pass the full error-decomposition gates on independent frames and scenes before tuning semantic loss weights or claiming open-scene/open-vocabulary performance.
-
