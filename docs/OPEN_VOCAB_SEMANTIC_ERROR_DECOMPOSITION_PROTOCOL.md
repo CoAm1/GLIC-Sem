@@ -167,7 +167,7 @@ MCD 投影标签是稀疏 LiDAR 参考，不是稠密二维人工真值。类别
 
 ### 5.4 统计方法
 
-像素不是独立样本。置信区间必须按连续时间块或 LiDAR scan block bootstrap，禁止把数百万像素当作独立样本计算极小标准误。默认使用 2000 次 block bootstrap，报告 95% CI。
+像素不是独立样本。同一 LiDAR 标注 scan 投影到多张相机帧时，这些帧也不是独立样本。主置信区间必须按 `label_scan_index` 成组 bootstrap；只有数据缺少 scan 对应关系时才退化为连续时间块。禁止把像素或同一扫描的多张投影帧当作独立样本计算标准误。默认使用 2000 次 group bootstrap，报告 95% CI。
 
 涉及随机初始化的 3D 训练至少运行种子 3407、3408、3409。二维确定性诊断运行一次，但必须验证重复运行哈希一致。最终比较报告均值、标准差、配对差值和置信区间，而不只报告最好 seed。
 
@@ -231,7 +231,7 @@ True Joint 已出现明显几何破坏，只保留为负对照。在语义链通
 - SAM Oracle 区域多数票；
 - full/PCA region score 生成；
 - 3D score 与 alpha 读取；
-- temporal-block bootstrap；
+- label-scan group bootstrap（无 scan 对应关系时才使用 temporal block）；
 - 合成数据单元测试；
 - Git staged-file 模型/大文件拦截器。
 
@@ -308,8 +308,12 @@ Git 禁止提交：
 
 ## 10. 当前已知事实与立即动作
 
-已有 60 帧 A/B 表明 Head-only 能保持 Geometry 的 RGB 与深度，而 True Joint 明显破坏几何；但 Head-only 的严格 held-out macro-IoU 仅为 0.0663，小类 vehicle、bike 和 barrier 仍接近失败。因此当前最优先任务不是继续调联合 loss，而是完成 S0–S3 误差分解。
+已有 60 帧 A/B 表明 Head-only 能保持 Geometry 的 RGB 与深度，而 True Joint 明显破坏几何；但 Head-only 的严格 held-out macro-IoU 仅为 0.0663，小类 vehicle、bike 和 barrier 仍接近失败。因此当前不继续调联合 loss。
 
-现有 PCA 诊断中，全区域 Full/PCA top-1 agreement 为 0.7138，margin ≥0.01 时为 0.9403，语言相关性 MAE 为 0.0190。它满足 MAE 门槛，但未满足本协议的 top-1 agreement 门槛，PCA 是一个真实嫌疑点；然而在获得 S0、S1、S2 的同域 mIoU 前，不能断言 PCA 是最大瓶颈。
+60 帧同域 S0–S2 已完成。严格 held-out 主域的 SAM Oracle、Full OpenCLIP 和 PCA128 macro-IoU 分别为 0.3851、0.1368 和 0.0897。S1 仅保留 S0 的 35.5%，S2 仅保留 S1 的 65.6%，Gate B、C、D 均未通过。当前最早失败在 SAM 区域上限，其后还有显著的 OpenCLIP 区域表征损失和 PCA 损失；在它们通过前不得把 3D loss 当成首要优化对象。
 
-此外，当前 SAM1 teacher 的 `report.json` 沿用了“`SAM3 references are pseudo labels`”警告文本，与实际教师不一致。基础代码必须将模型身份写入结构化 metadata，并通过测试防止再次混淆 SAM1/SAM3 实验来源。
+进一步分解显示，小类的主要症状不是简单的未覆盖。held-out 中 pedestrian 和 bike 的 SAM 参考覆盖率分别为 99.70% 和 100%，但覆盖像素上的 oracle 正确率仅为 3.35% 和 0%。这说明有效标签落入了 SAM 区域，却没有形成能由区域多数票恢复的小类分区。该症状支持“区域合并/粒度不足”假设，但不能直接证明 SAM 错误，因为稀疏标签投影、时间差或动态目标也可能产生相同现象。
+
+当前训练帧上的冻结基线为 `points_per_side=32`：SAM Oracle macro-IoU 0.3784、参考覆盖率 92.97%。下一项单变量实验是仅在 12 个训练关键帧上测试 `points_per_side=64`；若训练侧区域上限没有实质改善，则不扩大到 held-out，而转向保留 SAM 多尺度假设。完整记录见 `docs/experiments/MCD_S0_S2_60FRAME_20260803.md`。
+
+此外，旧 SAM1 teacher 的 `report.json` 沿用了“`SAM3 references are pseudo labels`”警告文本，与实际教师不一致。新代码已把 SAM1 身份写入结构化 metadata，并在预检中记录旧元数据警告；既有产物因可追溯性保留，不伪造重写。
